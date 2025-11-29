@@ -1,0 +1,282 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================
+    // FUNCIONES AUXILIARES
+    // ============================================
+    
+    // Verificar si el usuario está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Verificar si el documento del usuario existe
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    
+    // Obtener datos del usuario actual (con verificación de existencia)
+    function getUserData() {
+      return userDocExists() 
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        : null;
+    }
+    
+    // Verificar si el usuario tiene un rol específico
+    function hasRole(role) {
+      return isAuthenticated() && userDocExists() && getUserData().role == role;
+    }
+    
+    // Verificar si el usuario tiene uno de los roles permitidos
+    function hasAnyRole(roles) {
+      return isAuthenticated() && userDocExists() && getUserData().role in roles;
+    }
+    
+    // Verificar si el usuario es el propietario del documento
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // ============================================
+    // COLECCIÓN: users
+    // ============================================
+    match /users/{userId} {
+      // Leer: el propio usuario, admin, presidente o secretaria pueden ver datos de usuarios
+      allow read: if isOwner(userId) || hasAnyRole(['admin', 'presidente', 'secretaria']);
+      
+      // Crear: solo durante el signup (Firebase Auth maneja esto)
+      // En producción, esto debería ser más restrictivo
+      allow create: if isAuthenticated();
+      
+      // Actualizar: solo el propio usuario o un admin
+      allow update: if isOwner(userId) || hasRole('admin');
+      
+      // Eliminar: solo admins
+      allow delete: if hasRole('admin');
+    }
+    
+    // ============================================
+    // COLECCIÓN: settings (configuración del sistema)
+    // ============================================
+    match /settings/{settingId} {
+      // Leer: todos los usuarios autenticados
+      allow read: if isAuthenticated();
+      
+      // Escribir: solo admin
+      allow write: if hasRole('admin');
+    }
+    
+    // ============================================
+    // COLECCIÓN: houses (parcelas)
+    // ============================================
+    match /houses/{houseId} {
+      // Leer: todos los usuarios autenticados
+      allow read: if isAuthenticated();
+      
+      // Escribir: solo admin y presidente
+      allow write: if hasAnyRole(['admin', 'presidente']);
+    }
+    
+    // ============================================
+    // COLECCIÓN: bills (boletas de electricidad)
+    // ============================================
+    match /bills/{billId} {
+      // Leer: 
+      // - El residente de la casa puede ver sus boletas (queries filtradas por houseId en el código)
+      // - Admin, presidente, técnico y secretaria pueden ver todas
+      // NOTA: No usamos resource.data en queries porque no funciona. 
+      // La aplicación filtra por houseId del usuario en el código.
+      allow read: if isAuthenticated() && (
+        hasAnyRole(['admin', 'presidente', 'tecnico', 'secretaria']) ||
+        (userDocExists() && getUserData().houseId != null)
+      );
+      
+      // Crear: técnico, admin y presidente
+      allow create: if hasAnyRole(['admin', 'tecnico', 'presidente']);
+      
+      // Actualizar: admin, presidente y técnico (para marcar como pagado)
+      allow update: if hasAnyRole(['admin', 'presidente', 'tecnico']);
+      
+      // Eliminar: admin y técnico
+      allow delete: if hasAnyRole(['admin', 'tecnico']);
+    }
+    
+    // ============================================
+    // COLECCIÓN: globalBills (boletas globales de electricidad)
+    // ============================================
+    match /globalBills/{globalBillId} {
+      // Leer: todos los usuarios autenticados pueden ver boletas globales
+      allow read: if isAuthenticated();
+      
+      // Crear: técnico, admin y presidente
+      allow create: if hasAnyRole(['admin', 'tecnico', 'presidente']);
+      
+      // Actualizar: técnico, admin y presidente
+      allow update: if hasAnyRole(['admin', 'tecnico', 'presidente']);
+      
+      // Eliminar: solo admin
+      allow delete: if hasRole('admin');
+    }
+    
+    // ============================================
+    // COLECCIÓN: payments (comprobantes de pago)
+    // ============================================
+    match /payments/{paymentId} {
+      // Leer: el residente que lo subió, admin, presidente
+      // NOTA: Permitimos queries filtrando por houseId en el código
+      allow read: if isAuthenticated() && (
+        hasAnyRole(['admin', 'presidente']) ||
+        userDocExists()
+      );
+      
+      // Crear: cualquier residente autenticado
+      allow create: if isAuthenticated();
+      
+      // Actualizar: solo admin y presidente (para validar pagos)
+      allow update: if hasAnyRole(['admin', 'presidente']);
+      
+      // Eliminar: solo admin
+      allow delete: if hasRole('admin');
+    }
+    
+    // ============================================
+    // COLECCIÓN: meetings (reuniones)
+    // ============================================
+    match /meetings/{meetingId} {
+      // Leer: todos los usuarios autenticados
+      allow read: if isAuthenticated();
+      
+      // Crear: secretaria, presidente, admin
+      allow create: if hasAnyRole(['admin', 'presidente', 'secretaria']);
+      
+      // Actualizar: secretaria, presidente, admin
+      allow update: if hasAnyRole(['admin', 'presidente', 'secretaria']);
+      
+      // Eliminar: solo admin
+      allow delete: if hasRole('admin');
+    }
+    
+    // ============================================
+    // COLECCIÓN: quotas (cuotas extras)
+    // ============================================
+    match /quotas/{quotaId} {
+      // Leer: todos los usuarios autenticados
+      allow read: if isAuthenticated();
+      
+      // Crear: admin y presidente
+      allow create: if hasAnyRole(['admin', 'presidente']);
+      
+      // Actualizar: admin y presidente
+      allow update: if hasAnyRole(['admin', 'presidente']);
+      
+      // Eliminar: solo admin
+      allow delete: if hasRole('admin');
+    }
+    
+    // ============================================
+    // COLECCIÓN: certificates (certificados)
+    // ============================================
+    match /certificates/{certificateId} {
+      // Leer: el residente que lo solicitó, secretaria, admin
+      // NOTA: Permitimos queries, el código filtra por userId
+      allow read: if isAuthenticated() && (
+        hasAnyRole(['admin', 'secretaria']) ||
+        userDocExists()
+      );
+      
+      // Crear: cualquier usuario autenticado puede solicitarlo
+      allow create: if isAuthenticated();
+      
+      // Actualizar: secretaria y admin (para generar el PDF)
+      allow update: if hasAnyRole(['admin', 'secretaria']);
+      
+      // Eliminar: solo admin
+      allow delete: if hasRole('admin');
+    }
+    
+    // ============================================
+    // COLECCIÓN: vehicles (vehículos)
+    // ============================================
+    match /vehicles/{vehicleId} {
+      // Leer: todos los usuarios autenticados (para búsqueda)
+      allow read: if isAuthenticated();
+      
+      // Crear: el residente de la casa puede crear vehículos
+      allow create: if isAuthenticated() && (
+        hasAnyRole(['admin', 'presidente']) ||
+        userDocExists()
+      );
+      
+      // Actualizar: el residente de la casa, admin, presidente
+      // NOTA: La validación de ownership se hace en el código
+      allow update: if isAuthenticated() && (
+        hasAnyRole(['admin', 'presidente']) ||
+        userDocExists()
+      );
+      
+      // Eliminar: el residente de la casa, admin
+      // NOTA: La validación de ownership se hace en el código
+      allow delete: if hasAnyRole(['admin']) || userDocExists();
+    }
+    
+    // ============================================
+    // COLECCIÓN: transactions (cruce de pagos)
+    // ============================================
+    match /transactions/{transactionId} {
+      // Leer: admin, presidente y técnico
+      allow read: if hasAnyRole(['admin', 'presidente', 'tecnico']);
+      
+      // Crear: admin y técnico (al subir cartola bancaria)
+      allow create: if hasAnyRole(['admin', 'tecnico']);
+      
+      // Actualizar: admin, presidente y técnico (para confirmar matches)
+      allow update: if hasAnyRole(['admin', 'presidente', 'tecnico']);
+      
+      // Eliminar: admin y técnico
+      allow delete: if hasAnyRole(['admin', 'tecnico']);
+    }
+    
+    // ============================================
+    // COLECCIÓN: expenses (gastos comunes)
+    // ============================================
+    match /expenses/{expenseId} {
+      // Leer: admin, presidente, secretaria
+      allow read: if hasAnyRole(['admin', 'presidente', 'secretaria']);
+      
+      // Escribir: admin y presidente
+      allow write: if hasAnyRole(['admin', 'presidente']);
+    }
+    
+    // ============================================
+    // COLECCIÓN: gateNumbers (números de portón)
+    // ============================================
+    match /gateNumbers/{gateNumberId} {
+      // Leer: 
+      // - Admin puede ver todos
+      // - Residentes pueden ver los de su parcela (filtrado en el código por houseId)
+      allow read: if isAuthenticated();
+      
+      // Crear: solo admin
+      allow create: if hasRole('admin');
+      
+      // Actualizar:
+      // - Admin puede actualizar todo
+      // - Residentes solo pueden actualizar 'notes' y 'updatedAt' de números de su parcela
+      allow update: if hasRole('admin') || 
+                       (isAuthenticated() && 
+                        resource.data.houseId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.houseId &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notes', 'updatedAt']));
+      
+      // Eliminar: solo admin
+      allow delete: if hasRole('admin');
+    }
+    
+    // ============================================
+    // Denegar acceso a cualquier otra colección
+    // ============================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

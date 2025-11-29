@@ -1,0 +1,65 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // ============================================
+    // REGLAS SIMPLIFICADAS PARA PLAN SPARK (GRATUITO)
+    // ============================================
+    // Nota: No podemos usar consultas a Firestore en el plan gratuito
+    // Por lo tanto, validamos permisos solo con request.auth
+    
+    // ============================================
+    // PDFs de boletas de electricidad
+    // ============================================
+    match /bills/{year}/{month}/{filename} {
+      // Leer: todos los usuarios autenticados
+      allow read: if request.auth != null;
+      
+      // Escribir: cualquier usuario autenticado (validar en código)
+      allow write: if request.auth != null;
+    }
+    
+    // ============================================
+    // Comprobantes de pago subidos por residentes
+    // ============================================
+    match /payments/{userId}/{filename} {
+      // Leer: cualquier usuario autenticado
+      allow read: if request.auth != null;
+      
+      // Escribir: solo el usuario autenticado en su propia carpeta
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // ============================================
+    // Templates de certificados (DOCX)
+    // ============================================
+    match /templates/{filename} {
+      // Leer y escribir: cualquier usuario autenticado
+      allow read, write: if request.auth != null;
+    }
+    
+    // ============================================
+    // PDFs de certificados generados
+    // ============================================
+    match /certificates/{certificateId}/{filename} {
+      // Leer: todos los usuarios autenticados
+      allow read: if request.auth != null;
+      
+      // Escribir: cualquier usuario autenticado
+      allow write: if request.auth != null;
+    }
+    
+    // ============================================
+    // Cartolas bancarias (Excel)
+    // ============================================
+    match /bank-statements/{filename} {
+      // Leer y escribir: cualquier usuario autenticado
+      allow read, write: if request.auth != null;
+    }
+    
+    // Denegar todo lo demás
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
